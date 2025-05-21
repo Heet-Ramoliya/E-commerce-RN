@@ -6,9 +6,11 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, CreditCard, MapPin, Truck, X } from 'lucide-react-native';
+import { useStripe, useGooglePay } from '@stripe/stripe-react-native';
 import Colors from '@/constants/Colors';
 import Spacing from '@/constants/Spacing';
 import Typography from '@/constants/Typography';
@@ -22,6 +24,10 @@ export default function CheckoutScreen() {
   const router = useRouter();
   const { cart, getCartTotal, clearCart } = useCart();
   const { user } = useAuth();
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
+  const { isGooglePaySupported, initGooglePay, presentGooglePay } =
+    useGooglePay();
+  const [googlePaySupported, setGooglePaySupported] = useState(false);
 
   const [activeStep, setActiveStep] = useState('shipping');
   const [processing, setProcessing] = useState(false);
@@ -53,6 +59,34 @@ export default function CheckoutScreen() {
   const tax = subtotal * 0.08; // 8% tax
   const total = subtotal + shipping + tax;
 
+  // Initialize Google Pay
+  React.useEffect(() => {
+    async function checkGooglePay() {
+      if (Platform.OS === 'android') {
+        const supported = await isGooglePaySupported({
+          testEnv: true, // Set to false in production
+          existingPaymentMethodRequired: false,
+          merchantName: 'Your Store Name',
+        });
+        setGooglePaySupported(supported);
+
+        if (supported) {
+          await initGooglePay({
+            testEnv: true, // Set to false in production
+            merchantName: 'Your Store Name',
+            countryCode: 'US',
+            billingAddressConfig: {
+              format: 'FULL',
+              isPhoneNumberRequired: true,
+              isRequired: true,
+            },
+          });
+        }
+      }
+    }
+    checkGooglePay();
+  }, [isGooglePaySupported, initGooglePay]);
+
   const handleShippingChange = (field, value) => {
     setShippingForm((prev) => ({ ...prev, [field]: value }));
   };
@@ -79,6 +113,62 @@ export default function CheckoutScreen() {
         'Missing Information',
         'Please fill in all shipping details.'
       );
+    }
+  };
+
+  const handleGooglePay = async () => {
+    try {
+      setProcessing(true);
+
+      // This would typically come from your backend
+      const clientSecret = 'your_payment_intent_client_secret';
+
+      const { error } = await presentGooglePay({
+        clientSecret,
+        forSetupIntent: false,
+      });
+
+      if (error) {
+        Alert.alert('Error', error.message);
+        return;
+      }
+
+      // Create new order
+      const newOrder = createOrder({
+        userId: user.id,
+        status: 'Processing',
+        items: cart.map((item) => ({
+          productId: item.id,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          image: item.image,
+        })),
+        subtotal,
+        shipping,
+        tax,
+        total,
+        shippingAddress: shippingForm,
+        shippingMethod: isExpressShipping ? 'Express' : 'Standard',
+        paymentMethod: 'Google Pay',
+      });
+
+      // Clear cart after successful order
+      clearCart();
+      setProcessing(false);
+
+      // Navigate to order confirmation
+      router.replace('/');
+
+      // Show success message
+      Alert.alert(
+        'Order Placed Successfully',
+        `Your order #${newOrder.id} has been placed and is being processed.`,
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      Alert.alert('Error', error.message);
+      setProcessing(false);
     }
   };
 
@@ -266,17 +356,9 @@ export default function CheckoutScreen() {
             <View style={styles.shippingOptions}>
               <Text style={styles.shippingOptionsTitle}>Shipping Method</Text>
 
-              <TouchableOpacity
-                style={[
-                  styles.shippingOption,
-                  !isExpressShipping && styles.selectedShippingOption,
-                ]}
-                onPress={() => setIsExpressShipping(false)}
-              >
+              <TouchableOpacity style={styles.shippingOption}>
                 <View style={styles.shippingOptionRadio}>
-                  {!isExpressShipping && (
-                    <View style={styles.shippingOptionRadioInner} />
-                  )}
+                  <View style={styles.shippingOptionRadioInner} />
                 </View>
                 <View style={styles.shippingOptionContent}>
                   <View style={styles.shippingOptionHeader}>
@@ -284,41 +366,11 @@ export default function CheckoutScreen() {
                       Standard Shipping
                     </Text>
                     <Text style={styles.shippingOptionPrice}>
-                      {standardShipping === 0
-                        ? 'Free'
-                        : `$${standardShipping.toFixed(2)}`}
+                      {shipping === 0 ? 'Free' : `$${shipping.toFixed(2)}`}
                     </Text>
                   </View>
                   <Text style={styles.shippingOptionDescription}>
                     Estimated delivery in 5-7 business days
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.shippingOption,
-                  styles.expressShippingOption,
-                  isExpressShipping && styles.selectedShippingOption,
-                ]}
-                onPress={() => setIsExpressShipping(true)}
-              >
-                <View style={styles.shippingOptionRadio}>
-                  {isExpressShipping && (
-                    <View style={styles.shippingOptionRadioInner} />
-                  )}
-                </View>
-                <View style={styles.shippingOptionContent}>
-                  <View style={styles.shippingOptionHeader}>
-                    <Text style={styles.shippingOptionName}>
-                      Express Shipping
-                    </Text>
-                    <Text style={styles.shippingOptionPrice}>
-                      ${expressShippingCost.toFixed(2)}
-                    </Text>
-                  </View>
-                  <Text style={styles.shippingOptionDescription}>
-                    Guaranteed delivery in 1-2 business days
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -329,6 +381,22 @@ export default function CheckoutScreen() {
         {activeStep === 'payment' && (
           <View style={styles.formContainer}>
             <Text style={styles.formTitle}>Payment Information</Text>
+
+            {Platform.OS === 'android' && googlePaySupported && (
+              <Button
+                title="Pay with Google Pay"
+                onPress={handleGooglePay}
+                loading={processing}
+                style={styles.googlePayButton}
+                fullWidth
+              />
+            )}
+
+            <View style={styles.paymentDivider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>Or pay with card</Text>
+              <View style={styles.dividerLine} />
+            </View>
 
             <InputField
               label="Card Number"
@@ -566,6 +634,26 @@ const styles = StyleSheet.create({
     fontFamily: Typography.fonts.regular,
     fontSize: Typography.sizes.sm,
     color: Colors.text.tertiary,
+  },
+  googlePayButton: {
+    marginBottom: Spacing.lg,
+    backgroundColor: '#000',
+  },
+  paymentDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: Spacing.lg,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.neutral[300],
+  },
+  dividerText: {
+    fontFamily: Typography.fonts.regular,
+    fontSize: Typography.sizes.sm,
+    color: Colors.text.tertiary,
+    marginHorizontal: Spacing.md,
   },
   orderSummary: {
     padding: Spacing.lg,

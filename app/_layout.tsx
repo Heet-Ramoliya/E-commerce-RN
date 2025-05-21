@@ -11,6 +11,7 @@ import {
 } from '@expo-google-fonts/inter';
 import { CartProvider } from '@/context/CartContext';
 import { AuthProvider } from '@/context/AuthContext';
+import { StripeProvider } from '@stripe/stripe-react-native';
 
 // Prevent splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -37,19 +38,24 @@ export default function RootLayout() {
   }
 
   return (
-    <AuthProvider>
-      <CartProvider>
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="product/[id]"
-            options={{ presentation: 'card' }}
-          />
-          <Stack.Screen name="checkout" options={{ presentation: 'modal' }} />
-          <Stack.Screen name="+not-found" options={{ title: 'Oops!' }} />
-        </Stack>
-        <StatusBar style="auto" />
-      </CartProvider>
-    </AuthProvider>
+    <StripeProvider
+      publishableKey="your_publishable_key_here"
+      merchantIdentifier="your_merchant_identifier" // Only for Apple Pay
+    >
+      <AuthProvider>
+        <CartProvider>
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="product/[id]"
+              options={{ presentation: 'card' }}
+            />
+            <Stack.Screen name="checkout" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="+not-found" options={{ title: 'Oops!' }} />
+          </Stack>
+          <StatusBar style="auto" />
+        </CartProvider>
+      </AuthProvider>
+    </StripeProvider>
   );
 }
