@@ -25,6 +25,7 @@ export default function CheckoutScreen() {
 
   const [activeStep, setActiveStep] = useState('shipping');
   const [processing, setProcessing] = useState(false);
+  const [isExpressShipping, setIsExpressShipping] = useState(false);
 
   // Shipping address form state
   const [shippingForm, setShippingForm] = useState({
@@ -46,7 +47,9 @@ export default function CheckoutScreen() {
 
   // Calculate order totals
   const subtotal = getCartTotal();
-  const shipping = subtotal > 100 ? 0 : 10;
+  const standardShipping = subtotal > 100 ? 0 : 10;
+  const expressShippingCost = 80;
+  const shipping = isExpressShipping ? expressShippingCost : standardShipping;
   const tax = subtotal * 0.08; // 8% tax
   const total = subtotal + shipping + tax;
 
@@ -106,6 +109,7 @@ export default function CheckoutScreen() {
       tax,
       total,
       shippingAddress: shippingForm,
+      shippingMethod: isExpressShipping ? 'Express' : 'Standard',
       paymentMethod: `Credit Card (ending in ${paymentForm.cardNumber.slice(
         -4
       )})`,
@@ -262,9 +266,17 @@ export default function CheckoutScreen() {
             <View style={styles.shippingOptions}>
               <Text style={styles.shippingOptionsTitle}>Shipping Method</Text>
 
-              <TouchableOpacity style={styles.shippingOption}>
+              <TouchableOpacity
+                style={[
+                  styles.shippingOption,
+                  !isExpressShipping && styles.selectedShippingOption,
+                ]}
+                onPress={() => setIsExpressShipping(false)}
+              >
                 <View style={styles.shippingOptionRadio}>
-                  <View style={styles.shippingOptionRadioInner} />
+                  {!isExpressShipping && (
+                    <View style={styles.shippingOptionRadioInner} />
+                  )}
                 </View>
                 <View style={styles.shippingOptionContent}>
                   <View style={styles.shippingOptionHeader}>
@@ -272,11 +284,41 @@ export default function CheckoutScreen() {
                       Standard Shipping
                     </Text>
                     <Text style={styles.shippingOptionPrice}>
-                      {shipping === 0 ? 'Free' : `$${shipping.toFixed(2)}`}
+                      {standardShipping === 0
+                        ? 'Free'
+                        : `$${standardShipping.toFixed(2)}`}
                     </Text>
                   </View>
                   <Text style={styles.shippingOptionDescription}>
                     Estimated delivery in 5-7 business days
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.shippingOption,
+                  styles.expressShippingOption,
+                  isExpressShipping && styles.selectedShippingOption,
+                ]}
+                onPress={() => setIsExpressShipping(true)}
+              >
+                <View style={styles.shippingOptionRadio}>
+                  {isExpressShipping && (
+                    <View style={styles.shippingOptionRadioInner} />
+                  )}
+                </View>
+                <View style={styles.shippingOptionContent}>
+                  <View style={styles.shippingOptionHeader}>
+                    <Text style={styles.shippingOptionName}>
+                      Express Shipping
+                    </Text>
+                    <Text style={styles.shippingOptionPrice}>
+                      ${expressShippingCost.toFixed(2)}
+                    </Text>
+                  </View>
+                  <Text style={styles.shippingOptionDescription}>
+                    Guaranteed delivery in 1-2 business days
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -474,17 +516,24 @@ const styles = StyleSheet.create({
   shippingOption: {
     flexDirection: 'row',
     borderWidth: 1,
-    borderColor: Colors.primary[600],
+    borderColor: Colors.neutral[300],
     borderRadius: Spacing.radius.md,
     padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  selectedShippingOption: {
+    borderColor: Colors.primary[600],
     backgroundColor: Colors.primary[50],
+  },
+  expressShippingOption: {
+    borderStyle: 'dashed',
   },
   shippingOptionRadio: {
     width: 20,
     height: 20,
     borderRadius: 10,
     borderWidth: 2,
-    borderColor: Colors.primary[600],
+    borderColor: Colors.neutral[400],
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: Spacing.md,
