@@ -151,6 +151,8 @@ export default function ProfileScreen() {
     );
   }
 
+  console.log(user);
+
   // Profile Screen (when logged in)
   return (
     <ScrollView
@@ -163,7 +165,7 @@ export default function ProfileScreen() {
             <Image source={{ uri: user.avatar }} style={styles.profileImage} />
           ) : (
             <View style={styles.profileImagePlaceholder}>
-              <UserIcon size={40} color={Colors.neutral[400]} />
+              {/* <UserIcon size={40} color={Colors.neutral[400]} /> */}
             </View>
           )}
         </View>

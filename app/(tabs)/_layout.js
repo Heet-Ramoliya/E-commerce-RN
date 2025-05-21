@@ -19,28 +19,30 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, size }) => <Home color={color} size={size} />
+          tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="search"
         options={{
           title: 'Search',
-          tabBarIcon: ({ color, size }) => <Search color={color} size={size} />
+          tabBarIcon: ({ color, size }) => <Search color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="cart"
         options={{
           title: 'Cart',
-          tabBarIcon: ({ color, size }) => <ShoppingBag color={color} size={size} />
+          tabBarIcon: ({ color, size }) => (
+            <ShoppingBag color={color} size={size} />
+          ),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, size }) => <User color={color} size={size} />
+          tabBarIcon: ({ color, size }) => <User color={color} size={size} />,
         }}
       />
     </Tabs>
@@ -53,13 +55,10 @@ const styles = StyleSheet.create({
     shadowOpacity: 0,
     borderTopWidth: 1,
     borderTopColor: Colors.neutral[200],
-    height: 60,
-    paddingBottom: 8,
-    paddingTop: 8,
     backgroundColor: '#FFFFFF',
   },
   tabBarLabel: {
     fontFamily: 'Inter-Medium',
     fontSize: 12,
-  }
+  },
 });
