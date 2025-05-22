@@ -152,28 +152,26 @@ export default function CheckoutScreen() {
         {
           googlePay: {
             testEnv: true,
-            merchantName: 'MyApp Payments',
+            merchantName: 'Your Store Name',
             merchantCountryCode: 'US',
             currencyCode: 'USD',
             billingAddressConfig: {
               format: PlatformPay.BillingAddressFormat.Full,
-              isPhoneNumberRequired: false,
-              isRequired: false,
+              isPhoneNumberRequired: true,
+              isRequired: true,
             },
+            existingPaymentMethodRequired: false,
+            isEmailRequired: true,
           },
         }
       );
 
       if (error) {
-        console.error('Google Pay error:', error.code, error.message);
-        if (error.code === 'OR_BIBED_08') {
-          Alert.alert(
-            'Google Pay Error',
-            'Something went wrong with Google Pay. Please ensure a valid payment method is added to your Google Account or try another payment method.'
-          );
-        } else {
-          Alert.alert(error.code, error.message);
-        }
+        console.error('Google Pay error:', error);
+        Alert.alert(
+          'Payment Error',
+          error.message || 'Something went wrong with the payment.'
+        );
         setProcessing(false);
         return false;
       }
