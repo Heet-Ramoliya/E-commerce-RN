@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,11 +6,10 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
-  Platform,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { ChevronLeft, CreditCard, MapPin, Truck, X } from 'lucide-react-native';
-import { useStripe, useGooglePay } from '@stripe/stripe-react-native';
+import { ChevronLeft, CreditCard, MapPin, X } from 'lucide-react-native';
 import Colors from '@/constants/Colors';
 import Spacing from '@/constants/Spacing';
 import Typography from '@/constants/Typography';
@@ -19,19 +18,32 @@ import InputField from '@/components/InputField';
 import { useCart } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
 import { createOrder } from '@/data/orders';
+import {
+  confirmPlatformPayPayment,
+  isPlatformPaySupported,
+  PlatformPay,
+} from '@stripe/stripe-react-native';
 
 export default function CheckoutScreen() {
   const router = useRouter();
   const { cart, getCartTotal, clearCart } = useCart();
   const { user } = useAuth();
-  const { initPaymentSheet, presentPaymentSheet } = useStripe();
-  const { isGooglePaySupported, initGooglePay, presentGooglePay } =
-    useGooglePay();
-  const [googlePaySupported, setGooglePaySupported] = useState(false);
 
   const [activeStep, setActiveStep] = useState('shipping');
   const [processing, setProcessing] = useState(false);
   const [isExpressShipping, setIsExpressShipping] = useState(false);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('card');
+  const [paymentIntentId, setPaymentIntentId] = useState(null);
+
+  useEffect(() => {
+    (async function () {
+      if (!(await isPlatformPaySupported({ googlePay: { testEnv: true } }))) {
+        console.log("Google Pay isn't supported on this device");
+        Alert.alert('Google Pay is not supported on this device.');
+        setSelectedPaymentMethod('card'); // Fallback to card if Google Pay is unsupported
+      }
+    })();
+  }, []);
 
   // Shipping address form state
   const [shippingForm, setShippingForm] = useState({
@@ -56,36 +68,8 @@ export default function CheckoutScreen() {
   const standardShipping = subtotal > 100 ? 0 : 10;
   const expressShippingCost = 80;
   const shipping = isExpressShipping ? expressShippingCost : standardShipping;
-  const tax = subtotal * 0.08; // 8% tax
+  const tax = subtotal * 0.08;
   const total = subtotal + shipping + tax;
-
-  // Initialize Google Pay
-  React.useEffect(() => {
-    async function checkGooglePay() {
-      if (Platform.OS === 'android') {
-        const supported = await isGooglePaySupported({
-          testEnv: true, // Set to false in production
-          existingPaymentMethodRequired: false,
-          merchantName: 'Your Store Name',
-        });
-        setGooglePaySupported(supported);
-
-        if (supported) {
-          await initGooglePay({
-            testEnv: true, // Set to false in production
-            merchantName: 'Your Store Name',
-            countryCode: 'US',
-            billingAddressConfig: {
-              format: 'FULL',
-              isPhoneNumberRequired: true,
-              isRequired: true,
-            },
-          });
-        }
-      }
-    }
-    checkGooglePay();
-  }, [isGooglePaySupported, initGooglePay]);
 
   const handleShippingChange = (field, value) => {
     setShippingForm((prev) => ({ ...prev, [field]: value }));
@@ -116,66 +100,106 @@ export default function CheckoutScreen() {
     }
   };
 
-  const handleGooglePay = async () => {
+  console.log('Payment Intent ID :: ', paymentIntentId);
+
+  const fetchPaymentIntentClientSecret = async (paymentAmount) => {
     try {
-      setProcessing(true);
+      const response = await fetch(
+        `${process.env.EXPO_PUBLIC_BACKEND_URL}/create-payment-intent`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currency: 'usd', amount: paymentAmount }),
+        }
+      );
 
-      // This would typically come from your backend
-      const clientSecret = 'your_payment_intent_client_secret';
-
-      const { error } = await presentGooglePay({
-        clientSecret,
-        forSetupIntent: false,
-      });
-
-      if (error) {
-        Alert.alert('Error', error.message);
-        return;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create payment intent');
       }
 
-      // Create new order
-      const newOrder = createOrder({
-        userId: user.id,
-        status: 'Processing',
-        items: cart.map((item) => ({
-          productId: item.id,
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity,
-          image: item.image,
-        })),
-        subtotal,
-        shipping,
-        tax,
-        total,
-        shippingAddress: shippingForm,
-        shippingMethod: isExpressShipping ? 'Express' : 'Standard',
-        paymentMethod: 'Google Pay',
-      });
-
-      // Clear cart after successful order
-      clearCart();
-      setProcessing(false);
-
-      // Navigate to order confirmation
-      router.replace('/');
-
-      // Show success message
-      Alert.alert(
-        'Order Placed Successfully',
-        `Your order #${newOrder.id} has been placed and is being processed.`,
-        [{ text: 'OK' }]
-      );
+      const data = await response.json();
+      setPaymentIntentId(data.paymentIntentId);
+      return data.clientSecret;
     } catch (error) {
+      console.error('Error fetching client secret:', error.message);
       Alert.alert('Error', error.message);
+      return null;
+    }
+  };
+
+  const pay = async () => {
+    try {
+      setProcessing(true);
+      const paymentAmount = Math.round(total * 100);
+
+      if (isNaN(paymentAmount) || paymentAmount <= 0) {
+        Alert.alert('Invalid Amount', 'Please enter a valid amount.');
+        setProcessing(false);
+        return false;
+      }
+
+      const clientSecret = await fetchPaymentIntentClientSecret(paymentAmount);
+
+      if (!clientSecret) {
+        Alert.alert('Error', 'Failed to get client secret.');
+        setProcessing(false);
+        return false;
+      }
+
+      const { error, paymentIntent } = await confirmPlatformPayPayment(
+        clientSecret,
+        {
+          googlePay: {
+            testEnv: true,
+            merchantName: 'MyApp Payments',
+            merchantCountryCode: 'US',
+            currencyCode: 'USD',
+            billingAddressConfig: {
+              format: PlatformPay.BillingAddressFormat.Full,
+              isPhoneNumberRequired: false,
+              isRequired: false,
+            },
+          },
+        }
+      );
+
+      if (error) {
+        console.error('Google Pay error:', error.code, error.message);
+        if (error.code === 'OR_BIBED_08') {
+          Alert.alert(
+            'Google Pay Error',
+            'Something went wrong with Google Pay. Please ensure a valid payment method is added to your Google Account or try another payment method.'
+          );
+        } else {
+          Alert.alert(error.code, error.message);
+        }
+        setProcessing(false);
+        return false;
+      }
+
+      setPaymentIntentId(paymentIntent.id);
+      Alert.alert('Success', 'The payment was confirmed successfully.');
+      return true;
+    } catch (error) {
+      console.error('Unexpected payment error:', error);
+      Alert.alert('Error', 'An unexpected error occurred during payment.');
       setProcessing(false);
+      return false;
     }
   };
 
   const handlePlaceOrder = async () => {
-    if (!validatePaymentForm()) {
+    if (selectedPaymentMethod === 'card' && !validatePaymentForm()) {
       Alert.alert('Missing Information', 'Please fill in all payment details.');
       return;
+    }
+
+    if (selectedPaymentMethod === 'googlePay') {
+      const paymentSuccess = await pay();
+      if (!paymentSuccess) {
+        return; // Stop if payment fails
+      }
     }
 
     setProcessing(true);
@@ -183,7 +207,6 @@ export default function CheckoutScreen() {
     // Simulate order processing
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
-    // Create new order
     const newOrder = createOrder({
       userId: user.id,
       status: 'Processing',
@@ -200,9 +223,11 @@ export default function CheckoutScreen() {
       total,
       shippingAddress: shippingForm,
       shippingMethod: isExpressShipping ? 'Express' : 'Standard',
-      paymentMethod: `Credit Card (ending in ${paymentForm.cardNumber.slice(
-        -4
-      )})`,
+      paymentMethod:
+        selectedPaymentMethod === 'card'
+          ? `Credit Card (ending in ${paymentForm.cardNumber.slice(-4)})`
+          : 'Google Pay',
+      paymentIntentId, // Include paymentIntentId for tracking
     });
 
     // Clear cart after successful order
@@ -356,9 +381,17 @@ export default function CheckoutScreen() {
             <View style={styles.shippingOptions}>
               <Text style={styles.shippingOptionsTitle}>Shipping Method</Text>
 
-              <TouchableOpacity style={styles.shippingOption}>
+              <TouchableOpacity
+                style={[
+                  styles.shippingOption,
+                  !isExpressShipping && styles.selectedShippingOption,
+                ]}
+                onPress={() => setIsExpressShipping(false)}
+              >
                 <View style={styles.shippingOptionRadio}>
-                  <View style={styles.shippingOptionRadioInner} />
+                  {!isExpressShipping && (
+                    <View style={styles.shippingOptionRadioInner} />
+                  )}
                 </View>
                 <View style={styles.shippingOptionContent}>
                   <View style={styles.shippingOptionHeader}>
@@ -366,11 +399,41 @@ export default function CheckoutScreen() {
                       Standard Shipping
                     </Text>
                     <Text style={styles.shippingOptionPrice}>
-                      {shipping === 0 ? 'Free' : `$${shipping.toFixed(2)}`}
+                      {standardShipping === 0
+                        ? 'Free'
+                        : `$${standardShipping.toFixed(2)}`}
                     </Text>
                   </View>
                   <Text style={styles.shippingOptionDescription}>
                     Estimated delivery in 5-7 business days
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.shippingOption,
+                  styles.expressShippingOption,
+                  isExpressShipping && styles.selectedShippingOption,
+                ]}
+                onPress={() => setIsExpressShipping(true)}
+              >
+                <View style={styles.shippingOptionRadio}>
+                  {isExpressShipping && (
+                    <View style={styles.shippingOptionRadioInner} />
+                  )}
+                </View>
+                <View style={styles.shippingOptionContent}>
+                  <View style={styles.shippingOptionHeader}>
+                    <Text style={styles.shippingOptionName}>
+                      Express Shipping
+                    </Text>
+                    <Text style={styles.shippingOptionPrice}>
+                      ${expressShippingCost.toFixed(2)}
+                    </Text>
+                  </View>
+                  <Text style={styles.shippingOptionDescription}>
+                    Guaranteed delivery in 1-2 business days
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -382,61 +445,117 @@ export default function CheckoutScreen() {
           <View style={styles.formContainer}>
             <Text style={styles.formTitle}>Payment Information</Text>
 
-            {Platform.OS === 'android' && googlePaySupported && (
-              <Button
-                title="Pay with Google Pay"
-                onPress={handleGooglePay}
-                loading={processing}
-                style={styles.googlePayButton}
-                fullWidth
-              />
+            {/* Payment Method Selector */}
+            <View style={styles.paymentOptions}>
+              <Text style={styles.paymentOptionsTitle}>
+                Select Payment Method
+              </Text>
+
+              <TouchableOpacity
+                style={[
+                  styles.paymentOption,
+                  selectedPaymentMethod === 'card' &&
+                    styles.selectedPaymentOption,
+                ]}
+                onPress={() => setSelectedPaymentMethod('card')}
+              >
+                <View style={styles.paymentOptionRadio}>
+                  {selectedPaymentMethod === 'card' && (
+                    <View style={styles.paymentOptionRadioInner} />
+                  )}
+                </View>
+                <View style={styles.paymentOptionContent}>
+                  <View style={styles.paymentOptionHeader}>
+                    <Text style={styles.paymentOptionName}>
+                      Credit/Debit Card
+                    </Text>
+                    <CreditCard size={20} color={Colors.text.primary} />
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.paymentOption,
+                  selectedPaymentMethod === 'googlePay' &&
+                    styles.selectedPaymentOption,
+                ]}
+                onPress={() => setSelectedPaymentMethod('googlePay')}
+              >
+                <View style={styles.paymentOptionRadio}>
+                  {selectedPaymentMethod === 'googlePay' && (
+                    <View style={styles.paymentOptionRadioInner} />
+                  )}
+                </View>
+                <View style={styles.paymentOptionContent}>
+                  <View style={styles.paymentOptionHeader}>
+                    <Text style={styles.paymentOptionName}>Google Pay</Text>
+                    <Image
+                      source={{
+                        uri: 'https://img.icons8.com/?size=100&id=d3FdjviJ7gNe&format=png&color=000000',
+                      }}
+                      style={styles.paymentOptionIcon}
+                    />
+                  </View>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            {/* Credit Card Form */}
+            {selectedPaymentMethod === 'card' && (
+              <View style={styles.paymentForm}>
+                <InputField
+                  label="Card Number"
+                  placeholder="XXXX XXXX XXXX XXXX"
+                  value={paymentForm.cardNumber}
+                  onChangeText={(value) =>
+                    handlePaymentChange('cardNumber', value)
+                  }
+                  keyboardType="numeric"
+                  required
+                />
+                <InputField
+                  label="Name on Card"
+                  placeholder="Enter name on card"
+                  value={paymentForm.nameOnCard}
+                  onChangeText={(value) =>
+                    handlePaymentChange('nameOnCard', value)
+                  }
+                  required
+                />
+                <View style={styles.rowFields}>
+                  <InputField
+                    label="Expiration Date"
+                    placeholder="MM/YY"
+                    value={paymentForm.expiration}
+                    onChangeText={(value) =>
+                      handlePaymentChange('expiration', value)
+                    }
+                    required
+                    style={styles.halfField}
+                  />
+                  <InputField
+                    label="Security Code"
+                    placeholder="CVV"
+                    value={paymentForm.cvv}
+                    onChangeText={(value) => handlePaymentChange('cvv', value)}
+                    keyboardType="numeric"
+                    required
+                    style={styles.halfField}
+                  />
+                </View>
+              </View>
             )}
 
-            <View style={styles.paymentDivider}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>Or pay with card</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <InputField
-              label="Card Number"
-              placeholder="XXXX XXXX XXXX XXXX"
-              value={paymentForm.cardNumber}
-              onChangeText={(value) => handlePaymentChange('cardNumber', value)}
-              keyboardType="numeric"
-              required
-            />
-
-            <InputField
-              label="Name on Card"
-              placeholder="Enter name on card"
-              value={paymentForm.nameOnCard}
-              onChangeText={(value) => handlePaymentChange('nameOnCard', value)}
-              required
-            />
-
-            <View style={styles.rowFields}>
-              <InputField
-                label="Expiration Date"
-                placeholder="MM/YY"
-                value={paymentForm.expiration}
-                onChangeText={(value) =>
-                  handlePaymentChange('expiration', value)
-                }
-                required
-                style={styles.halfField}
-              />
-
-              <InputField
-                label="Security Code"
-                placeholder="CVV"
-                value={paymentForm.cvv}
-                onChangeText={(value) => handlePaymentChange('cvv', value)}
-                keyboardType="numeric"
-                required
-                style={styles.halfField}
-              />
-            </View>
+            {/* Google Pay Placeholder */}
+            {selectedPaymentMethod === 'googlePay' && (
+              <View style={styles.paymentForm}>
+                <Text style={styles.googlePayText}>
+                  You will be prompted to pay with Google Pay when you place the
+                  order.
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -466,7 +585,6 @@ export default function CheckoutScreen() {
           </View>
         </View>
       </ScrollView>
-
       <View style={styles.footer}>
         {activeStep === 'shipping' ? (
           <Button
@@ -533,6 +651,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.xs,
     paddingHorizontal: Spacing.md,
     borderRadius: Spacing.radius.full,
+    backgroundColor: Colors.neutral[100],
     backgroundColor: Colors.neutral[100],
   },
   activeProgressStep: {
@@ -635,31 +754,78 @@ const styles = StyleSheet.create({
     fontSize: Typography.sizes.sm,
     color: Colors.text.tertiary,
   },
-  googlePayButton: {
-    marginBottom: Spacing.lg,
-    backgroundColor: '#000',
+  paymentOptions: {
+    marginTop: Spacing.md,
   },
-  paymentDivider: {
+  paymentOptionsTitle: {
+    fontFamily: Typography.fonts.medium,
+    fontSize: Typography.sizes.md,
+    color: Colors.text.primary,
+    marginBottom: Spacing.md,
+  },
+  paymentOption: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: Colors.neutral[300],
+    borderRadius: Spacing.radius.md,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  selectedPaymentOption: {
+    borderColor: Colors.primary[600],
+    backgroundColor: Colors.primary[50],
+  },
+  paymentOptionRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: Colors.neutral[400],
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.md,
+  },
+  paymentOptionRadioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.primary[600],
+  },
+  paymentOptionContent: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: Spacing.lg,
   },
-  dividerLine: {
+  paymentOptionHeader: {
     flex: 1,
-    height: 1,
-    backgroundColor: Colors.neutral[300],
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  dividerText: {
+  paymentOptionName: {
+    fontFamily: Typography.fonts.medium,
+    fontSize: Typography.sizes.md,
+    color: Colors.text.primary,
+  },
+  paymentOptionIcon: {
+    width: 20,
+    height: 20,
+  },
+  paymentForm: {
+    marginTop: Spacing.md,
+  },
+  googlePayText: {
     fontFamily: Typography.fonts.regular,
-    fontSize: Typography.sizes.sm,
-    color: Colors.text.tertiary,
-    marginHorizontal: Spacing.md,
+    fontSize: Typography.sizes.md,
+    color: Colors.text.primary,
+    marginBottom: Spacing.md,
+    textAlign: 'center',
   },
   orderSummary: {
     padding: Spacing.lg,
     backgroundColor: Colors.neutral[50],
     borderTopWidth: 1,
-    borderTopColor: Colors.neutral[200],
+    borderTopColor: Colors.neutral[300],
   },
   summaryTitle: {
     fontFamily: Typography.fonts.semiBold,

@@ -25,22 +25,19 @@ export default function RootLayout() {
     'Inter-SemiBold': Inter_600SemiBold,
   });
 
-  // Hide splash screen once fonts are loaded
   useEffect(() => {
     if (fontsLoaded || fontError) {
       SplashScreen.hideAsync();
     }
   }, [fontsLoaded, fontError]);
 
-  // Return null to keep splash screen visible while fonts load
   if (!fontsLoaded && !fontError) {
     return null;
   }
 
   return (
     <StripeProvider
-      publishableKey="your_publishable_key_here"
-      merchantIdentifier="your_merchant_identifier" // Only for Apple Pay
+      publishableKey={process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? ''}
     >
       <AuthProvider>
         <CartProvider>
