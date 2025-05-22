@@ -17,10 +17,12 @@ app.post('/create-payment-intent', async (req, res) => {
       return res.status(400).send({ error: 'Invalid amount provided' });
     }
 
+    // Create a PaymentIntent with the order amount and currency
     const paymentIntent = await stripe.paymentIntents.create({
-      payment_method_types: ['card'],
       amount: Math.round(amount),
       currency,
+      payment_method_types: ['card', 'google_pay'],
+      // Enable capture method
       capture_method: 'automatic',
     });
 
@@ -29,6 +31,7 @@ app.post('/create-payment-intent', async (req, res) => {
       paymentIntentId: paymentIntent.id,
     });
   } catch (error) {
+    console.error('Error creating payment intent:', error);
     res.status(500).send({ error: error.message });
   }
 });
@@ -49,10 +52,12 @@ app.post('/refund-payment', async (req, res) => {
       .status(200)
       .send({ success: true, message: 'Refund successful', refund });
   } catch (error) {
+    console.error('Error processing refund:', error);
     res.status(500).send({ error: error.message });
   }
 });
 
-app.listen(process.env.PORT || 5000, '0.0.0.0', () => {
-  console.log(`Server listening on port ${process.env.PORT}`);
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server listening on port ${PORT}`);
 });
